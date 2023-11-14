@@ -1,0 +1,74 @@
+experiment:
+  seed: 88
+  save_dir: ../experiments/
+
+
+data: 
+  annotations: ../data/train_kfold.csv
+  data_dir: ../data/train/
+  input: imgfile
+  target: target
+  outer_fold: 0
+  dataset:
+    name: SETIDataset
+    params:
+      flip: [hflip, vflip]
+      drop_time: 0.5
+      drop_freq: 0.5
+      verbose: true
+      sample_one_cadence: true
+
+
+transform:
+  resize:
+  augment:
+  crop:
+  preprocess: 
+
+
+task: 
+  name: SampleCadenceTask
+  params: 
+
+
+model:
+  name: Net2D
+  params:
+    backbone: efficientnet_b0
+    pretrained: true
+    num_classes: 1
+    dropout: 0.5
+    in_channels: 1
+    multisample_dropout: true
+    pool: avg
+
+
+loss:
+  name: BCEWithLogitsLoss
+  params:
+
+
+optimizer:
+  name: AdamW
+  params:
+    lr: 3.0e-4
+    weight_decay: 5.0e-4
+
+
+scheduler: 
+  name: CosineAnnealingLR
+  params:
+    final_lr: 0.0
+
+
+train:
+  batch_size: 32
+  num_epochs: 10
+
+
+evaluate: 
+  metrics: [AUROC]
+  monitor: auroc
+  mode: max
+
+

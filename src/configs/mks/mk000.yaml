@@ -1,0 +1,101 @@
+experiment:
+  seed: 88
+  save_dir: ../experiments/
+  
+data:
+  annotations: ../../train_kfold.csv
+  data_dir: ../../images/
+  input: imgfile
+  target: label
+  inner_fold: null
+  outer_fold: 0
+  dataset:
+    name: ImageDataset
+    params:
+      flip: true
+      verbose: true
+      test_mode: null
+  exclude_bad: null
+  num_workers: null
+  sampler: null
+  
+transform:
+  resize:
+    name: resize
+    params:
+      imsize:
+      - 512
+      - 512
+  augment:
+    name: RandAugment
+    params:
+      'n': 3
+      m: 12
+  crop: null
+  preprocess:
+    name: Preprocessor
+    params:
+      image_range:
+      - 0
+      - 255
+      input_range:
+      - 0
+      - 1
+      mean:
+      - 0.5
+      - 0.5
+      - 0.5
+      sdev:
+      - 0.5
+      - 0.5
+      - 0.5
+      
+task:
+  name: ClassificationTask
+  params: null
+  
+model:
+  name: Net2D
+  params:
+    backbone: tf_efficientnet_b4
+    load_pretrained: null
+    pretrained: true
+    num_classes: 4
+    dropout: 0.2
+    in_channels: 3
+    multisample_dropout: true
+    pool: avg
+    
+loss:
+  name: CrossEntropyLoss
+  params: null
+  
+optimizer:
+  name: AdamW
+  params:
+    lr: 0.0003
+    weight_decay: 0.0005
+    
+scheduler:
+  name: CosineAnnealingLR
+  params:
+    final_lr: 0.0
+    
+train:
+  batch_size: 16
+  num_epochs: 10
+  num_snapshots: null
+  accumulate_grad_batches: null
+  
+evaluate:
+  batch_size: 16
+  metrics:
+  - AUROC
+  - Accuracy
+  monitor: auc_bg
+  mode: max
+  save_top_k:  null
+  
+accelerator: null
+
+local_rank: 0
