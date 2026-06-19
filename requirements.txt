@@ -13,3 +13,5 @@ torchmetrics==0.3.2
 pytorch-lightning==1.2
 google-cloud-storage>=2.0.0
 numpy<2.0
+pytesseract>=0.3.10
+Pillow>=9.0.0

@@ -5,6 +5,8 @@ import os
 import re
 import torch
 import albumentations as A
+import pytesseract
+from PIL import Image
 
 from contextlib import asynccontextmanager
 from omegaconf import OmegaConf
@@ -151,6 +153,56 @@ def preprocess_image(image_bytes: bytes) -> torch.Tensor:
     return tensor
 
 
+# ── OCR text detection ────────────────────────────────────────────────────────
+
+# Keywords that indicate gender written on the ultrasound image
+_BOY_KEYWORDS  = ["boy", "its a boy", "it's a boy", "it is a boy",
+                   "male", "niño", "nino", "its boy", "it'saboy"]
+_GIRL_KEYWORDS = ["girl", "its a girl", "it's a girl", "it is a girl",
+                   "female", "niña", "nina", "its girl", "it'sagirl"]
+
+
+def _detect_gender_from_text(image_bytes: bytes) -> tuple[str | None, str]:
+    """
+    Run OCR on the image and look for explicit gender text overlay.
+
+    Returns:
+        (gender_label, raw_text) where gender_label is 'boy', 'girl', or None.
+    """
+    try:
+        # Decode image and convert to grayscale for better OCR accuracy
+        buf   = np.frombuffer(image_bytes, dtype=np.uint8)
+        img   = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+        gray  = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+        # Threshold to enhance bright text (white/yellow) on dark background
+        _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
+        pil_img   = Image.fromarray(thresh)
+
+        # Run OCR — page segmentation mode 11: sparse text, no OSD
+        raw_text = pytesseract.image_to_string(
+            pil_img,
+            config="--psm 11 --oem 3"
+        )
+        cleaned = raw_text.lower().replace("\n", " ").replace("-", " ").strip()
+
+        found_boy  = any(kw in cleaned for kw in _BOY_KEYWORDS)
+        found_girl = any(kw in cleaned for kw in _GIRL_KEYWORDS)
+
+        if found_boy and not found_girl:
+            return "boy", raw_text.strip()
+        if found_girl and not found_boy:
+            return "girl", raw_text.strip()
+        # Both found (e.g. image has "boy" and "girl" labels) — ambiguous
+        if found_boy and found_girl:
+            return "text_says_boy_girl", raw_text.strip()
+
+        return None, raw_text.strip()
+
+    except Exception:
+        return None, ""
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @app.get("/health")
@@ -162,13 +214,29 @@ def health():
 async def predict(file: UploadFile = File(...)):
     """
     Upload a fetal ultrasound image (JPG or PNG).
-    Returns predicted gender, confidence score, and all class probabilities.
+
+    Decision priority:
+      1. If gender text is written on the image (e.g. "IT'S-A-BOY!") → use OCR result.
+      2. Otherwise → use the visual model prediction.
     """
     if not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="Uploaded file must be an image.")
 
     image_bytes = await file.read()
 
+    # ── Step 1: OCR — check for text written on the image ─────────────────────
+    text_label, detected_text = _detect_gender_from_text(image_bytes)
+    if text_label is not None:
+        return JSONResponse({
+            "predicted_label":  text_label,
+            "confidence":       0.99,
+            "decision_basis":   "text_detected",
+            "detected_text":    detected_text,
+            "probabilities":    None,
+            "filename":         file.filename,
+        })
+
+    # ── Step 2: Visual model prediction ───────────────────────────────────────
     try:
         tensor = preprocess_image(image_bytes)
     except ValueError as e:
@@ -176,7 +244,7 @@ async def predict(file: UploadFile = File(...)):
 
     with torch.no_grad():
         logits = _model(tensor)
-        probs  = torch.softmax(logits, dim=1).cpu().numpy()[0]  # (4,)
+        probs  = torch.softmax(logits, dim=1).cpu().numpy()[0]
 
     predicted_class = int(probs.argmax())
     confidence      = float(probs.max())
@@ -188,23 +256,35 @@ async def predict(file: UploadFile = File(...)):
         "text_says_boy_girl": round(float(probs[3]), 4),
     }
 
-    # ── Validation 2: confidence must be high enough ──────────────────────────
+    # If model itself thinks there's text but OCR missed it, flag it
+    if predicted_class == 3 and text_label is None:
+        return JSONResponse({
+            "predicted_label":  "text_says_boy_girl",
+            "confidence":       round(confidence, 4),
+            "decision_basis":   "visual_model",
+            "message":          "Model detected text on image but OCR could not read it clearly.",
+            "probabilities":    probabilities,
+            "filename":         file.filename,
+        })
+
     if confidence < CONFIDENCE_THRESHOLD:
-        return JSONResponse(status_code=200, content={
-            "predicted_label": "low_confidence",
-            "confidence":      round(confidence, 4),
+        return JSONResponse({
+            "predicted_label":  "low_confidence",
+            "confidence":       round(confidence, 4),
+            "decision_basis":   "visual_model",
             "message": (
                 f"Model confidence ({confidence:.0%}) is below threshold "
                 f"({CONFIDENCE_THRESHOLD:.0%}). The image may not show the "
                 "genitalia region clearly. Please try a different frame."
             ),
-            "probabilities": probabilities,
-            "filename": file.filename,
+            "probabilities":    probabilities,
+            "filename":         file.filename,
         })
 
     return JSONResponse({
-        "predicted_label": LABEL_MAP[predicted_class],
-        "confidence":      round(confidence, 4),
-        "probabilities":   probabilities,
-        "filename":        file.filename,
+        "predicted_label":  LABEL_MAP[predicted_class],
+        "confidence":       round(confidence, 4),
+        "decision_basis":   "visual_model",
+        "probabilities":    probabilities,
+        "filename":         file.filename,
     })
