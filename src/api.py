@@ -27,10 +27,10 @@ CHECKPOINT      = LOCAL_CKPT_PATH                             # resolved at star
 # ── Validation thresholds ─────────────────────────────────────────────────────
 # Minimum softmax confidence to return a prediction.
 # Below this → "low_confidence" response.
+# NOTE: grayscale check was removed — 3D/4D ultrasound images are amber/brown
+# (not grayscale), so channel-deviation checks produce false negatives.
+# The model confidence is the correct and only gate for invalid images.
 CONFIDENCE_THRESHOLD  = float(os.getenv("CONFIDENCE_THRESHOLD", "0.65"))
-# Max allowed colour deviation across RGB channels (0–255 scale).
-# Ultrasound images are grayscale; colour photos will exceed this.
-GRAYSCALE_THRESHOLD   = float(os.getenv("GRAYSCALE_THRESHOLD",  "18.0"))
 
 
 def _download_checkpoint_from_gcs(gcs_uri: str, dest: str):
@@ -158,32 +158,6 @@ def health():
     return {"status": "ok", "model_loaded": _model is not None}
 
 
-def _is_ultrasound(image_bytes: bytes) -> tuple[bool, str]:
-    """
-    Reject obviously non-ultrasound images.
-    Ultrasound images are grayscale — all 3 RGB channels carry nearly
-    identical values. A colour photo (face, selfie, etc.) has large
-    per-channel variance and will fail this check.
-    """
-    buf = np.frombuffer(image_bytes, dtype=np.uint8)
-    img = cv2.imdecode(buf, cv2.IMREAD_COLOR)
-    if img is None:
-        return False, "Could not decode image."
-
-    # Convert BGR → float32 for channel comparison
-    img_f = img.astype(np.float32)
-    rg_diff = float(np.mean(np.abs(img_f[:, :, 2] - img_f[:, :, 1])))  # R-G
-    rb_diff = float(np.mean(np.abs(img_f[:, :, 2] - img_f[:, :, 0])))  # R-B
-
-    if rg_diff > GRAYSCALE_THRESHOLD or rb_diff > GRAYSCALE_THRESHOLD:
-        return False, (
-            f"Image appears to be a colour photo (channel deviation "
-            f"R-G={rg_diff:.1f}, R-B={rb_diff:.1f}). "
-            "Please upload a fetal ultrasound image of the genitalia region."
-        )
-    return True, ""
-
-
 @app.post("/predict")
 async def predict(file: UploadFile = File(...)):
     """
@@ -195,17 +169,6 @@ async def predict(file: UploadFile = File(...)):
 
     image_bytes = await file.read()
 
-    # ── Validation 1: must look like a grayscale ultrasound ───────────────────
-    valid, reason = _is_ultrasound(image_bytes)
-    if not valid:
-        return JSONResponse(status_code=422, content={
-            "predicted_label": "invalid_image",
-            "confidence": 0.0,
-            "message": reason,
-            "filename": file.filename,
-        })
-
-    # ── Run model ─────────────────────────────────────────────────────────────
     try:
         tensor = preprocess_image(image_bytes)
     except ValueError as e:
