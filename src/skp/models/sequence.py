@@ -2,7 +2,10 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from transformers.models.distilbert.modeling_distilbert import Transformer as _Transformer
+try:
+    from transformers.models.distilbert.modeling_distilbert import Transformer as _Transformer
+except (ImportError, Exception):
+    _Transformer = None
 from .pooling import GeM, AdaptiveConcatPool1d
 
 
