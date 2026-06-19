@@ -46,7 +46,7 @@ def _download_checkpoint_from_gcs(gcs_uri: str, dest: str):
     print(f"Downloading checkpoint from {gcs_uri} → {dest}")
     blob.download_to_filename(dest)
     print("Checkpoint download complete.")
-USE_GPU        = os.getenv("USE_GPU", "0") == "1"
+USE_GPU        = os.getenv("USE_GPU", "1") == "1"  # default ON — Cloud Run has nvidia-l4
 IMAGE_SIZE     = 512
 
 LABEL_MAP = {
