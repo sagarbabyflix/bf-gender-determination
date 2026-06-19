@@ -12,3 +12,5 @@ tqdm>=4.64.0
 torchmetrics==0.3.2
 pytorch-lightning==1.2
 google-cloud-storage>=2.0.0
+transformers>=4.0.0
+numpy<2.0
