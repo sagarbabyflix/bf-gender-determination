@@ -21,9 +21,10 @@ RUN pip install --no-cache-dir \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# ── Copy application source and model checkpoint ──────────────────────────────
-COPY src/        ./src/
-COPY experiments/ ./experiments/
+# ── Copy application source ───────────────────────────────────────────────────
+# Checkpoint is NOT bundled — it is downloaded from GCS at container startup
+# via the GCS_CHECKPOINT environment variable set in Cloud Run.
+COPY src/ ./src/
 
 # Run from src/ so relative imports (configs/, skp/) resolve correctly
 WORKDIR /app/src
