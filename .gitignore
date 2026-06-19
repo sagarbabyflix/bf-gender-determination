@@ -1,0 +1,17 @@
+# Model checkpoints — store on GCS, not in git
+experiments/
+*.ckpt
+*.pth
+*.pt
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Predictions output
+predictions/
+
+# Test/scratch files
+src/image_list.txt
