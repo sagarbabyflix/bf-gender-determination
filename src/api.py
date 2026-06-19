@@ -24,6 +24,14 @@ GCS_CHECKPOINT  = os.getenv("GCS_CHECKPOINT",   "")          # e.g. gs://my-buck
 LOCAL_CKPT_PATH = os.getenv("CHECKPOINT_PATH",  "../experiments/mk000/checkpoints/epoch=009-vm=1.8604.ckpt")
 CHECKPOINT      = LOCAL_CKPT_PATH                             # resolved at startup
 
+# ── Validation thresholds ─────────────────────────────────────────────────────
+# Minimum softmax confidence to return a prediction.
+# Below this → "low_confidence" response.
+CONFIDENCE_THRESHOLD  = float(os.getenv("CONFIDENCE_THRESHOLD", "0.65"))
+# Max allowed colour deviation across RGB channels (0–255 scale).
+# Ultrasound images are grayscale; colour photos will exceed this.
+GRAYSCALE_THRESHOLD   = float(os.getenv("GRAYSCALE_THRESHOLD",  "18.0"))
+
 
 def _download_checkpoint_from_gcs(gcs_uri: str, dest: str):
     """Download checkpoint from GCS using the storage client library."""
@@ -150,6 +158,32 @@ def health():
     return {"status": "ok", "model_loaded": _model is not None}
 
 
+def _is_ultrasound(image_bytes: bytes) -> tuple[bool, str]:
+    """
+    Reject obviously non-ultrasound images.
+    Ultrasound images are grayscale — all 3 RGB channels carry nearly
+    identical values. A colour photo (face, selfie, etc.) has large
+    per-channel variance and will fail this check.
+    """
+    buf = np.frombuffer(image_bytes, dtype=np.uint8)
+    img = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+    if img is None:
+        return False, "Could not decode image."
+
+    # Convert BGR → float32 for channel comparison
+    img_f = img.astype(np.float32)
+    rg_diff = float(np.mean(np.abs(img_f[:, :, 2] - img_f[:, :, 1])))  # R-G
+    rb_diff = float(np.mean(np.abs(img_f[:, :, 2] - img_f[:, :, 0])))  # R-B
+
+    if rg_diff > GRAYSCALE_THRESHOLD or rb_diff > GRAYSCALE_THRESHOLD:
+        return False, (
+            f"Image appears to be a colour photo (channel deviation "
+            f"R-G={rg_diff:.1f}, R-B={rb_diff:.1f}). "
+            "Please upload a fetal ultrasound image of the genitalia region."
+        )
+    return True, ""
+
+
 @app.post("/predict")
 async def predict(file: UploadFile = File(...)):
     """
@@ -161,26 +195,53 @@ async def predict(file: UploadFile = File(...)):
 
     image_bytes = await file.read()
 
+    # ── Validation 1: must look like a grayscale ultrasound ───────────────────
+    valid, reason = _is_ultrasound(image_bytes)
+    if not valid:
+        return JSONResponse(status_code=422, content={
+            "predicted_label": "invalid_image",
+            "confidence": 0.0,
+            "message": reason,
+            "filename": file.filename,
+        })
+
+    # ── Run model ─────────────────────────────────────────────────────────────
     try:
         tensor = preprocess_image(image_bytes)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
     with torch.no_grad():
-        logits = _model(tensor)                         # (1, 4)
+        logits = _model(tensor)
         probs  = torch.softmax(logits, dim=1).cpu().numpy()[0]  # (4,)
 
     predicted_class = int(probs.argmax())
     confidence      = float(probs.max())
 
+    probabilities = {
+        "boy":                round(float(probs[0]), 4),
+        "girl":               round(float(probs[1]), 4),
+        "unable_to_assess":   round(float(probs[2]), 4),
+        "text_says_boy_girl": round(float(probs[3]), 4),
+    }
+
+    # ── Validation 2: confidence must be high enough ──────────────────────────
+    if confidence < CONFIDENCE_THRESHOLD:
+        return JSONResponse(status_code=200, content={
+            "predicted_label": "low_confidence",
+            "confidence":      round(confidence, 4),
+            "message": (
+                f"Model confidence ({confidence:.0%}) is below threshold "
+                f"({CONFIDENCE_THRESHOLD:.0%}). The image may not show the "
+                "genitalia region clearly. Please try a different frame."
+            ),
+            "probabilities": probabilities,
+            "filename": file.filename,
+        })
+
     return JSONResponse({
         "predicted_label": LABEL_MAP[predicted_class],
         "confidence":      round(confidence, 4),
-        "probabilities": {
-            "boy":               round(float(probs[0]), 4),
-            "girl":              round(float(probs[1]), 4),
-            "unable_to_assess":  round(float(probs[2]), 4),
-            "text_says_boy_girl": round(float(probs[3]), 4),
-        },
-        "filename": file.filename,
+        "probabilities":   probabilities,
+        "filename":        file.filename,
     })
