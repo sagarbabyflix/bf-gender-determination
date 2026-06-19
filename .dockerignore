@@ -1,0 +1,12 @@
+.git/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+*.log
+src/etl/
+src/image_list.txt
+predictions/

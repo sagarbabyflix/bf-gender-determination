@@ -24,7 +24,7 @@ def load_model(cfg, args):
         cfg.model.params.pretrained = False
 
     model = builder.build_model(cfg)
-    weights = torch.load(cfg.checkpoint, map_location=lambda storage, loc: storage)['state_dict']
+    weights = torch.load(cfg.checkpoint, map_location=lambda storage, loc: storage, weights_only=False)['state_dict']
     weights = {re.sub(r'^model.', '', k) : v for k,v in weights.items()}
     if cfg.local_rank == 0:
         print(f'Loading checkpoint from {cfg.checkpoint} ...')
@@ -192,7 +192,8 @@ def predict(cfg, args, mode='predict'):
     y_pred, names = [],[]
     for _ind, data in iterator:
         batch, labels, _names = data
-        batch, labels = cudaify(batch, labels, device=cfg.local_rank)
+        if not args.cpu_inference:
+            batch, labels = cudaify(batch, labels, device=cfg.local_rank)
         with torch.no_grad():
             output = model(batch)
 
