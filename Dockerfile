@@ -21,10 +21,9 @@ RUN pip install --no-cache-dir \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# ── Copy application source only (checkpoint lives on GCS, not in the image) ──
+# ── Copy application source and model checkpoint ──────────────────────────────
 COPY src/        ./src/
-# Uncomment the line below only for local testing without GCS:
-# COPY experiments/ ./experiments/
+COPY experiments/ ./experiments/
 
 # Run from src/ so relative imports (configs/, skp/) resolve correctly
 WORKDIR /app/src

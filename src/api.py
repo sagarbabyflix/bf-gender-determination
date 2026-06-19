@@ -20,7 +20,8 @@ CONFIG_PATH     = os.getenv("CONFIG_PATH",      "configs/mks/mk000.yaml")
 # If GCS_CHECKPOINT is set, the model is downloaded from Cloud Storage at startup.
 # Otherwise falls back to a local path (useful for local dev / non-GCS deploys).
 GCS_CHECKPOINT  = os.getenv("GCS_CHECKPOINT",   "")          # e.g. gs://my-bucket/gender-det/checkpoint.ckpt
-LOCAL_CKPT_PATH = os.getenv("CHECKPOINT_PATH",  "/tmp/checkpoint.ckpt")
+# Default local path works both in Docker (/app/src → /app/experiments) and locally
+LOCAL_CKPT_PATH = os.getenv("CHECKPOINT_PATH",  "../experiments/mk000/checkpoints/epoch=009-vm=1.8604.ckpt")
 CHECKPOINT      = LOCAL_CKPT_PATH                             # resolved at startup
 
 
@@ -64,9 +65,7 @@ async def lifespan(app: FastAPI):
     if GCS_CHECKPOINT:
         _download_checkpoint_from_gcs(GCS_CHECKPOINT, LOCAL_CKPT_PATH)
 
-    ckpt_path = LOCAL_CKPT_PATH if GCS_CHECKPOINT else os.getenv(
-        "CHECKPOINT_PATH", "../experiments/mk000/checkpoints/epoch=009-vm=1.8604.ckpt"
-    )
+    ckpt_path = LOCAL_CKPT_PATH
 
     print(f"Loading config from  : {CONFIG_PATH}")
     print(f"Loading checkpoint   : {ckpt_path}")

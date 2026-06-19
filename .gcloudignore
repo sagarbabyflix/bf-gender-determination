@@ -1,0 +1,11 @@
+# GCP Cloud Build ignores — different from .gitignore
+# experiments/ is intentionally NOT listed here so the checkpoint
+# gets included in the Cloud Build context and copied into the image.
+.git/
+.gitignore
+__pycache__/
+*.pyc
+*.pyo
+src/image_list.txt
+predictions/
+README.md
